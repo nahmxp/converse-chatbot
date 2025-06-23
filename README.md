@@ -1,5 +1,9 @@
 # PDF Chatbot (OpenRouter)
 
+![Screenshot of PDF Chatbot app in action](screenshot.png)
+
+*A sample query and response, with the terminal-like progress box visible.*
+
 A simple Streamlit app that lets you ask questions about links inside a PDF file, powered by an LLM via the OpenRouter API.
 
 ## Features
