@@ -1,6 +1,7 @@
 # PDF Chatbot (OpenRouter)
 
-![image](https://github.com/user-attachments/assets/9150fb77-811f-4071-a456-340819794509)
+<img width="3357" height="1764" alt="image" src="https://github.com/user-attachments/assets/64d0f11b-771c-4555-878e-4dff31ce2000" />
+
 
 *A sample query and response, with the terminal-like progress box visible.*
 
