@@ -8,11 +8,9 @@ from dotenv import load_dotenv
 import json
 import vosk
 import pyaudio
-import wave
 import threading
 import queue
 import time
-from streamlit_webrtc import webrtc_streamer, WebRtcMode, RTCConfiguration
 
 # Load environment variables
 load_dotenv()
@@ -20,8 +18,8 @@ load_dotenv()
 # Try to get API key from .env
 DEFAULT_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
 
-# PDF path
-PDF_PATH = "assets/links.pdf"
+# PDF path - Restaurant FAQ only
+PDF_PATHS = ["assets/RESFAQ1.pdf"]
 
 class VoiceRecognizer:
     def __init__(self):
@@ -150,22 +148,26 @@ class LinkHandler:
         """Get all links from all categories"""
         return [link for links in self.categories.values() for link in links]
 
-# Function to extract text from PDF
+# Function to extract text from multiple PDFs
 @st.cache_data(show_spinner=False)
-def extract_pdf_text(pdf_path):
-    if not os.path.exists(pdf_path):
-        return ""
-    try:
-        with open(pdf_path, 'rb') as file:
-            reader = PyPDF2.PdfReader(file)
-            text = ""
-            for page in reader.pages:
-                page_text = page.extract_text()
-                if page_text:
-                    text += page_text + "\n"
-            return text
-    except Exception as e:
-        return f"Error reading PDF: {e}"
+def extract_all_pdf_text(pdf_paths):
+    combined_text = ""
+    for pdf_path in pdf_paths:
+        if not os.path.exists(pdf_path):
+            combined_text += f"\n[PDF not found: {pdf_path}]\n"
+            continue
+        try:
+            with open(pdf_path, 'rb') as file:
+                reader = PyPDF2.PdfReader(file)
+                pdf_text = f"\n--- Content from {pdf_path} ---\n"
+                for page in reader.pages:
+                    page_text = page.extract_text()
+                    if page_text:
+                        pdf_text += page_text + "\n"
+                combined_text += pdf_text
+        except Exception as e:
+            combined_text += f"\n[Error reading {pdf_path}: {e}]\n"
+    return combined_text
 
 # Function to call OpenRouter API
 def call_openrouter_api(api_key, prompt, pdf_text):
@@ -175,8 +177,8 @@ def call_openrouter_api(api_key, prompt, pdf_text):
         "Content-Type": "application/json"
     }
     messages = [
-        {"role": "system", "content": "You are a helpful assistant. Given the following PDF content, answer the user's question by extracting and listing relevant links from the text. Only return links that are relevant to the user's prompt."},
-        {"role": "user", "content": f"PDF Content:\n{pdf_text}\n\nUser Prompt: {prompt}"}
+        {"role": "system", "content": "You are a helpful restaurant customer service assistant. Use the provided restaurant FAQ content to answer customer questions about services, delivery, orders, menu, hours, and policies. Give clear, helpful answers based on the information in the PDF."},
+        {"role": "user", "content": f"Restaurant FAQ Content:\n{pdf_text}\n\nCustomer Question: {prompt}"}
     ]
     data = {
         "model": "openrouter/auto",
@@ -200,8 +202,8 @@ def filter_pdf_text(pdf_text, query):
     return "\n".join(filtered) if filtered else pdf_text[:500]
 
 # --- Streamlit UI ---
-st.set_page_config(page_title="PDF Chatbot with Voice", layout="centered")
-st.title("PDF Chatbot with Voice Input (OpenRouter)")
+st.set_page_config(page_title="ConversAI - Restaurant FAQ Chatbot", layout="centered")
+st.title("🤖 ConversAI: Restaurant FAQ Voice Chatbot")
 
 # Initialize voice recognizer
 if 'voice_recognizer' not in st.session_state:
@@ -211,8 +213,8 @@ if 'voice_recognizer' not in st.session_state:
 if 'voice_text' not in st.session_state:
     st.session_state.voice_text = ""
 
-# Load PDF content
-pdf_text = extract_pdf_text(PDF_PATH)
+# Load PDF content from both PDFs
+pdf_text = extract_all_pdf_text(PDF_PATHS)
 
 # API key input
 if DEFAULT_API_KEY:
@@ -226,7 +228,7 @@ col1, col2 = st.columns([3, 1])
 
 with col1:
     # User prompt input (text)
-    user_prompt = st.text_input("Ask a question about the links in the PDF:", 
+    user_prompt = st.text_input("Ask questions about our restaurant services, delivery, orders:", 
                                value=st.session_state.voice_text)
 
 with col2:
