@@ -2,3 +2,8 @@ streamlit
 openai
 python-dotenv
 PyPDF2
+requests
+vosk
+pyaudio
+wave
+streamlit-webrtc

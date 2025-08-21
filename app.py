@@ -5,6 +5,14 @@ from typing import Dict, List
 import streamlit as st
 import requests
 from dotenv import load_dotenv
+import json
+import vosk
+import pyaudio
+import wave
+import threading
+import queue
+import time
+from streamlit_webrtc import webrtc_streamer, WebRtcMode, RTCConfiguration
 
 # Load environment variables
 load_dotenv()
@@ -14,6 +22,69 @@ DEFAULT_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
 
 # PDF path
 PDF_PATH = "assets/links.pdf"
+
+class VoiceRecognizer:
+    def __init__(self):
+        self.model = None
+        self.rec = None
+        self.is_recording = False
+        self.audio_queue = queue.Queue()
+        self._load_model()
+    
+    def _load_model(self):
+        """Load Vosk model for speech recognition"""
+        try:
+            # Try to load a small English model
+            # You can download models from https://alphacephei.com/vosk/models
+            model_path = "vosk-model-small-en-us-0.15"  # You'll need to download this
+            if os.path.exists(model_path):
+                self.model = vosk.Model(model_path)
+                self.rec = vosk.KaldiRecognizer(self.model, 16000)
+            else:
+                st.warning("Vosk model not found. Please download vosk-model-small-en-us-0.15")
+        except Exception as e:
+            st.error(f"Error loading Vosk model: {str(e)}")
+    
+    def record_audio(self, duration=5):
+        """Record audio for specified duration"""
+        if not self.model:
+            return "Voice model not available"
+        
+        try:
+            # Audio recording parameters
+            chunk = 4096
+            format = pyaudio.paInt16
+            channels = 1
+            rate = 16000
+            
+            p = pyaudio.PyAudio()
+            
+            stream = p.open(format=format,
+                          channels=channels,
+                          rate=rate,
+                          input=True,
+                          frames_per_buffer=chunk)
+            
+            frames = []
+            for i in range(0, int(rate / chunk * duration)):
+                data = stream.read(chunk)
+                frames.append(data)
+            
+            stream.stop_stream()
+            stream.close()
+            p.terminate()
+            
+            # Convert audio to text
+            audio_data = b''.join(frames)
+            if self.rec.AcceptWaveform(audio_data):
+                result = json.loads(self.rec.Result())
+                return result.get('text', '')
+            else:
+                result = json.loads(self.rec.FinalResult())
+                return result.get('text', '')
+                
+        except Exception as e:
+            return f"Error recording audio: {str(e)}"
 
 class LinkHandler:
     def __init__(self, pdf_path: str):
@@ -110,7 +181,7 @@ def call_openrouter_api(api_key, prompt, pdf_text):
     data = {
         "model": "openrouter/auto",
         "messages": messages,
-        "max_tokens": 256  # Limit the response length to fit within free tier
+        "max_tokens": 512  # Limit the response length to fit within free tier
     }
     response = requests.post(url, headers=headers, json=data)
     if response.status_code == 200:
@@ -129,21 +200,56 @@ def filter_pdf_text(pdf_text, query):
     return "\n".join(filtered) if filtered else pdf_text[:500]
 
 # --- Streamlit UI ---
-st.set_page_config(page_title="PDF Chatbot", layout="centered")
-st.title("PDF Chatbot (OpenRouter)")
+st.set_page_config(page_title="PDF Chatbot with Voice", layout="centered")
+st.title("PDF Chatbot with Voice Input (OpenRouter)")
 
-# Load PDF text (cache for performance)
+# Initialize voice recognizer
+if 'voice_recognizer' not in st.session_state:
+    st.session_state.voice_recognizer = VoiceRecognizer()
+
+# Initialize session state for voice text
+if 'voice_text' not in st.session_state:
+    st.session_state.voice_text = ""
+
+# Load PDF content
 pdf_text = extract_pdf_text(PDF_PATH)
 
-# API Key input (if not in .env, ask user)
+# API key input
 if DEFAULT_API_KEY:
     api_key = DEFAULT_API_KEY
     st.info("Loaded OpenRouter API key from .env file.")
 else:
     api_key = st.text_input("Enter your OpenRouter API Key", type="password")
 
-# User prompt input
-user_prompt = st.text_input("Ask a question about the links in the PDF:")
+# Create two columns for text and voice input
+col1, col2 = st.columns([3, 1])
+
+with col1:
+    # User prompt input (text)
+    user_prompt = st.text_input("Ask a question about the links in the PDF:", 
+                               value=st.session_state.voice_text)
+
+with col2:
+    st.write("")  # Add some spacing
+    # Voice input button
+    if st.button("🎤 Record (5s)", help="Click to record your question for 5 seconds"):
+        if st.session_state.voice_recognizer.model:
+            with st.spinner("Recording... Speak now!"):
+                voice_text = st.session_state.voice_recognizer.record_audio(duration=5)
+                if voice_text and voice_text.strip():
+                    st.session_state.voice_text = voice_text
+                    st.success(f"Recognized: {voice_text}")
+                    st.rerun()
+                else:
+                    st.warning("No speech detected. Please try again.")
+        else:
+            st.error("Voice recognition not available. Please download the Vosk model.")
+
+# Clear voice text button
+if st.session_state.voice_text:
+    if st.button("Clear Voice Input"):
+        st.session_state.voice_text = ""
+        st.rerun()
 
 # Terminal-like progress box
 progress_box = st.empty()
@@ -164,7 +270,7 @@ if st.button("Get Answer"):
     else:
         log("[1/4] Filtering PDF for relevant lines...")
         pdf_excerpt = filter_pdf_text(pdf_text, user_prompt)
-        log(f"[2/4] Preparing API request (max_tokens=256)...")
+        log(f"[2/4] Preparing API request (max_tokens=512)...")
         log(f"[3/4] Sending request to OpenRouter API...")
         with st.spinner("Querying LLM..."):
             answer = call_openrouter_api(api_key, user_prompt, pdf_excerpt)
